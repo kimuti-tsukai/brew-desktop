@@ -1,9 +1,9 @@
-use std::process::Command;
+use std::{fmt::Display, process::Command};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PackageType {
     Formula,
     Cask,
@@ -18,19 +18,24 @@ impl PackageType {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Deserialize, Serialize, PartialEq, Eq, Debug)]
 pub struct InstalledPackage {
-    name: String,
-    package_type: PackageType,
+    pub(super) name: String,
+    pub(super) package_type: PackageType,
 }
 
-#[derive(Error, Debug, PartialEq, Eq)]
-pub enum PackageCreateError {
-    #[error("The package was not found")]
-    NotFound,
+#[derive(Deserialize, Serialize, Error, Debug, PartialEq, Eq)]
+pub struct PackageCreateError {
+    msg: String,
 }
 
-#[derive(Error, Debug, PartialEq, Eq)]
+impl Display for PackageCreateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.msg)
+    }
+}
+
+#[derive(Deserialize, Serialize, Error, Debug, PartialEq, Eq)]
 pub enum InstalledPackageCreateError {
     #[error("The package couldn't create because {0}")]
     CreateError(#[from] PackageCreateError),
@@ -46,20 +51,21 @@ impl InstalledPackage {
         }
     }
 
-    // pub fn new(
-    //     name: String,
-    //     package_type: Option<PackageType>,
-    // ) -> Result<Self, InstalledPackageCreateError> {
-    //     let installed_list = super::list(package_type);
-
-    //     installed_list.into_iter().find()
-    // }
+    pub fn new(
+        name: &str,
+        package_type: Option<PackageType>,
+    ) -> Result<Self, InstalledPackageCreateError> {
+        match Package::new(name, package_type)? {
+            Package::Installed(package) => Ok(package),
+            Package::NotInstalled(_) => Err(InstalledPackageCreateError::NotInstalled),
+        }
+    }
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Deserialize, Serialize, PartialEq, Eq, Debug)]
 pub struct NotInstalledPackage {
-    name: String,
-    package_type: PackageType,
+    pub(super) name: String,
+    pub(super) package_type: PackageType,
 }
 
 impl NotInstalledPackage {
@@ -77,14 +83,14 @@ struct BrewInfoJson {
     casks: Vec<serde_json::Map<String, serde_json::Value>>,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Deserialize, Serialize, PartialEq, Eq, Debug)]
 pub enum Package {
     Installed(InstalledPackage),
     NotInstalled(NotInstalledPackage),
 }
 
 impl Package {
-    fn new(name: &str, package_type: Option<PackageType>) -> Result<Self, PackageCreateError> {
+    pub fn new(name: &str, package_type: Option<PackageType>) -> Result<Self, PackageCreateError> {
         let output = Command::new("brew")
             .args(match package_type {
                 None => vec!["info", "--json=v2", name],
@@ -94,7 +100,8 @@ impl Package {
             .unwrap();
 
         if !output.status.success() {
-            return Err(PackageCreateError::NotFound);
+            let stderr = String::from_utf8(output.stderr).unwrap();
+            return Err(PackageCreateError { msg: stderr });
         }
 
         let s = String::from_utf8(output.stdout).unwrap();
@@ -209,10 +216,9 @@ mod tests {
         fn notinstalled_auto_formula() {
             assert_eq!(
                 Package::new("uv", None),
-                Ok(Package::NotInstalled(NotInstalledPackage::new_without_check(
-                    "uv",
-                    PackageType::Formula
-                )))
+                Ok(Package::NotInstalled(
+                    NotInstalledPackage::new_without_check("uv", PackageType::Formula)
+                ))
             )
         }
 
@@ -220,10 +226,9 @@ mod tests {
         fn notinstalled_auto_cask() {
             assert_eq!(
                 Package::new("mactex", None),
-                Ok(Package::NotInstalled(NotInstalledPackage::new_without_check(
-                    "mactex",
-                    PackageType::Cask
-                )))
+                Ok(Package::NotInstalled(
+                    NotInstalledPackage::new_without_check("mactex", PackageType::Cask)
+                ))
             )
         }
     }
